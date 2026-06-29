@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# REAPER runtime data (stays local)
+~/.reaper/
+
+# Dev
+.env
+.env.*
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Temp files from tool output
+/tmp/reaper_*
+*.xml.bak
