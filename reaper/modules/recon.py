@@ -22,12 +22,38 @@ class NmapModule(BaseModule):
     _DANGEROUS = {"ftp", "telnet", "rsh", "rlogin", "finger", "tftp", "rexec"}
     _NOTABLE = {"smtp", "smb", "msrpc", "netbios-ssn", "microsoft-ds", "ms-wbt-server"}
 
+    # Allow-list for user-supplied `flags`: plain scan-tuning tokens only, no
+    # '/' or '=' at all (blocks any path/output-redirection argument outright)
+    # plus an explicit block on flags that make nmap read/write arbitrary
+    # files or run arbitrary scripts, since -oX/target/ports are already fixed
+    # by us and must not be overridable via this option.
+    _FLAG_TOKEN_RE = re.compile(r"^[A-Za-z0-9,._:-]+$")
+    _BLOCKED_FLAG_PREFIXES = (
+        "--script", "-oN", "-oX", "-oG", "-oA", "-oS", "--stylesheet",
+        "--datadir", "--servicedb", "--versiondb", "-iL", "--resume",
+        "--append-output", "-S", "--proxies", "--interactive",
+    )
+
+    def _sanitize_flags(self, raw: str) -> str:
+        safe: list[str] = []
+        for tok in raw.split():
+            if not self._FLAG_TOKEN_RE.match(tok):
+                self._emit(f"[!] Ignoring unsafe nmap flag token: {tok!r}")
+                continue
+            if tok.startswith("-") and any(
+                tok == p or tok.startswith(p) for p in self._BLOCKED_FLAG_PREFIXES
+            ):
+                self._emit(f"[!] Blocked disallowed nmap flag: {tok!r}")
+                continue
+            safe.append(tok)
+        return " ".join(safe)
+
     def run(self, target: str, options: dict) -> ModuleResult:
         if not self.tool_check_emit("nmap"):
             return ModuleResult(success=False, error="nmap not found")
 
         ports = options.get("ports", "1-65535")
-        extra_flags = options.get("flags", "-sV -sC -O --open")
+        extra_flags = self._sanitize_flags(options.get("flags", "-sV -sC -O --open"))
         tmpdir = tempfile.mkdtemp(prefix="reaper_nmap_")
         xml_out = Path(tmpdir) / "scan.xml"
 
@@ -59,7 +85,9 @@ class NmapModule(BaseModule):
             return findings
 
         for host in tree.getroot().findall("host"):
-            addr_el = host.find("address[@addrtype='ipv4']") or host.find("address")
+            addr_el = host.find("address[@addrtype='ipv4']")
+            if addr_el is None:
+                addr_el = host.find("address")
             ip = addr_el.get("addr", default_target) if addr_el is not None else default_target
 
             for port in host.findall(".//port"):

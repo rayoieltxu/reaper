@@ -196,14 +196,20 @@ class Database:
             )
             return cur.lastrowid  # type: ignore[return-value]
 
-    def complete_module_run(self, run_id: int, output: str, success: bool):
+    def complete_module_run(self, run_id: int, output: str, success: bool, command: str = ""):
         now = datetime.utcnow().isoformat()
         status = "completed" if success else "failed"
         with self._conn() as conn:
-            conn.execute(
-                "UPDATE module_runs SET status=?, output=?, completed_at=? WHERE id=?",
-                (status, output[-50000:], now, run_id),  # cap output at 50k chars
-            )
+            if command:
+                conn.execute(
+                    "UPDATE module_runs SET status=?, output=?, command=?, completed_at=? WHERE id=?",
+                    (status, output[-50000:], command, now, run_id),  # cap output at 50k chars
+                )
+            else:
+                conn.execute(
+                    "UPDATE module_runs SET status=?, output=?, completed_at=? WHERE id=?",
+                    (status, output[-50000:], now, run_id),
+                )
 
     def get_module_runs(self, session_id: int) -> list[dict]:
         with self._conn() as conn:

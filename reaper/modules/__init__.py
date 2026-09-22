@@ -29,6 +29,13 @@ SEVERITY_COLORS = {
 }
 
 
+def redact_command(cmd: list[str], *secrets: str) -> str:
+    """Join a command list for logging/storage, masking tokens that equal a secret value
+    (e.g. a plaintext password) so it never lands in the terminal, SSE stream, or DB/report."""
+    secret_set = {s for s in secrets if s}
+    return " ".join("***" if tok in secret_set else tok for tok in cmd)
+
+
 @dataclass
 class Finding:
     title: str
@@ -136,33 +143,13 @@ class BaseModule(ABC):
         if env:
             proc_kwargs["env"] = env
 
-        def _kill(sig=signal.SIGTERM):
-            p = self._process
-            if p is None:
-                return
-            try:
-                if platform.system() != "Windows":
-                    try:
-                        os.killpg(os.getpgid(p.pid), sig)
-                    except (ProcessLookupError, PermissionError, OSError):
-                        p.send_signal(sig)
-                else:
-                    p.terminate()
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-
-        def _terminate():
-            _kill(signal.SIGTERM)
-            time.sleep(0.4)
-            _kill(signal.SIGKILL if platform.system() != "Windows" else signal.SIGTERM)
-
         original_sigint = signal.getsignal(signal.SIGINT)
         in_main = threading.current_thread() is threading.main_thread()
 
         def _sigint_handler(sig, frame):
             self._interrupted = True
             self._emit("[!] Interrupted — terminating child process…")
-            _terminate()
+            self._terminate()
             if in_main:
                 signal.signal(signal.SIGINT, original_sigint)
 
@@ -188,7 +175,7 @@ class BaseModule(ABC):
                 self._process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 self._emit(f"[!] Timeout ({timeout}s) — killing process")
-                _terminate()
+                self._terminate()
                 self._process.wait()
 
             t_out.join(timeout=5)
@@ -216,6 +203,38 @@ class BaseModule(ABC):
             self._process = None
 
         return returncode, "\n".join(stdout_lines), "\n".join(stderr_lines)
+
+    def _kill(self, sig=signal.SIGTERM):
+        p = self._process
+        if p is None:
+            return
+        try:
+            if platform.system() != "Windows":
+                try:
+                    os.killpg(os.getpgid(p.pid), sig)
+                except (ProcessLookupError, PermissionError, OSError):
+                    p.send_signal(sig)
+            else:
+                p.terminate()
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+    def _terminate(self):
+        self._kill(signal.SIGTERM)
+        time.sleep(0.4)
+        self._kill(signal.SIGKILL if platform.system() != "Windows" else signal.SIGTERM)
+
+    def cancel(self):
+        """Request cancellation of the currently running subprocess.
+
+        Thread-safe and callable from any thread (unlike the SIGINT handler in
+        run_command, which only installs in the main thread) — this is what
+        the Web UI's cancel endpoint calls, since module runs execute in a
+        ThreadPoolExecutor worker thread, not the main thread.
+        """
+        self._interrupted = True
+        self._emit("[!] Cancellation requested — terminating child process…")
+        self._terminate()
 
     def tool_available(self, tool: str) -> bool:
         import shutil

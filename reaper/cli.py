@@ -448,7 +448,7 @@ def run_cmd(module_or_action: str, target: str, timeout: int, opts: str, profile
         db.complete_module_run(run_id, str(exc), success=False)
         sys.exit(1)
 
-    db.complete_module_run(run_id, result.raw_output, success=result.success)
+    db.complete_module_run(run_id, result.raw_output, success=result.success, command=result.command)
     _save_findings(result, s["id"], module_or_action, t_val)
 
     if result.findings:
@@ -555,7 +555,7 @@ def _run_auto(target: str = None, profile: str = None, dry_run: bool = False):
             db.complete_module_run(run_id, str(exc), success=False)
             continue
 
-        db.complete_module_run(run_id, result.raw_output, success=result.success)
+        db.complete_module_run(run_id, result.raw_output, success=result.success, command=result.command)
         _save_findings(result, s["id"], mod_name, t_val)
         console.print(f"  → [green]{len(result.findings)} finding(s)[/green]")
 

@@ -39,6 +39,20 @@ class HashcatModule(BaseModule):
 
         mode = self._MODES.get(mode_key.lower(), mode_key)
 
+        if not Path(wordlist).exists():
+            msg = f"Wordlist not found: {wordlist}"
+            self._emit(f"[!] {msg}")
+            return ModuleResult(success=False, error=msg)
+
+        # hash_file may be a real file OR a literal hash string passed on the
+        # command line (both are valid hashcat usages) — only require the
+        # path to exist when it actually looks like one.
+        looks_like_path = "/" in hash_file or "\\" in hash_file or bool(Path(hash_file).suffix)
+        if looks_like_path and not Path(hash_file).exists():
+            msg = f"Hash file not found: {hash_file}"
+            self._emit(f"[!] {msg}")
+            return ModuleResult(success=False, error=msg)
+
         cmd = [
             "hashcat",
             "-m", mode,
@@ -101,6 +115,12 @@ class HydraModule(BaseModule):
         passlist = options.get("passlist", "/usr/share/wordlists/rockyou.txt")
         tasks = options.get("tasks", 4)
         port = options.get("port", "")
+
+        missing = [p for p in (userlist, passlist) if not Path(p).exists()]
+        if missing:
+            msg = f"Wordlist file(s) not found: {', '.join(missing)}"
+            self._emit(f"[!] {msg}")
+            return ModuleResult(success=False, error=msg)
 
         cmd = [
             "hydra",

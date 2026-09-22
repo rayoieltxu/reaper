@@ -1,5 +1,7 @@
 """Report generation: HTML, Markdown, JSON."""
+import html
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -123,7 +125,9 @@ def generate_report(
     counts = db.findings_count(session_id)
 
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    slug = session["name"].replace(" ", "_").lower()
+    # Strip anything but a safe charset so a session name can't escape the
+    # reports directory via path separators or '..' segments.
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", session["name"]).strip("._").lower() or "session"
 
     if output_path is None:
         reports_dir = Path.home() / ".reaper" / "reports"
@@ -157,31 +161,32 @@ def _render_html(session, findings, runs, counts, now) -> str:
         )
     cards_html += f'  <div class="card"><div class="count" style="color:#58a6ff">{total}</div><div class="label">Total</div></div>\n'
 
-    # Finding rows
+    # Finding rows — all scanned/user-controlled fields are HTML-escaped;
+    # `sev` comes from the closed Severity enum so it's safe as-is.
     rows = ""
     for i, f in enumerate(findings, 1):
         sev = f["severity"]
-        evi = f["evidence"][:200].replace("<", "&lt;").replace(">", "&gt;") if f["evidence"] else ""
+        evi = html.escape(f["evidence"][:200]) if f["evidence"] else ""
         rows += (
             f'  <tr>'
             f'<td>{i}</td>'
             f'<td><span class="sev sev-{sev}">{sev}</span></td>'
-            f'<td>{f["module"]}</td>'
-            f'<td>{f["title"][:120]}</td>'
-            f'<td>{f["target"][:60]}</td>'
+            f'<td>{html.escape(f["module"])}</td>'
+            f'<td>{html.escape(f["title"][:120])}</td>'
+            f'<td>{html.escape(f["target"][:60])}</td>'
             f'<td><pre class="evidence">{evi}</pre></td>'
             f'</tr>\n'
         )
 
-    # Run rows
+    # Run rows — `status` comes from the closed set completed/failed/running.
     run_rows = ""
     for r in runs:
         dur = _duration(r["started_at"], r.get("completed_at"))
         status_color = {"completed": "#06d6a0", "failed": "#ff3a3a", "running": "#ffd166"}.get(r["status"], "#888")
-        cmd_short = r["command"][:80].replace("<", "&lt;")
+        cmd_short = html.escape(r["command"][:80])
         run_rows += (
             f'  <tr>'
-            f'<td>{r["module_name"]}</td>'
+            f'<td>{html.escape(r["module_name"])}</td>'
             f'<td style="color:{status_color}">{r["status"]}</td>'
             f'<td>{r["started_at"][:16]}</td>'
             f'<td>{dur}</td>'

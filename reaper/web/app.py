@@ -214,33 +214,47 @@ async def run_module(module_name: str, body: RunRequest):
             loop.call_soon_threadsafe(queue.put_nowait, line)
 
         mod.set_output_callback(on_line)
+        _jobs[job_id]["module_instance"] = mod
 
         try:
-            result = mod.run(target, body.options)
-        except Exception as exc:
-            result_obj = type("R", (), {
-                "success": False, "findings": [], "raw_output": "",
-                "error": str(exc), "command": "",
-                "to_dict": lambda self: {"success": False, "error": str(exc), "findings": [], "raw_output": "", "command": ""},
-            })()
-            result = result_obj  # type: ignore
+            try:
+                result = mod.run(target, body.options)
+            except Exception as exc:
+                result_obj = type("R", (), {
+                    "success": False, "findings": [], "raw_output": "",
+                    "error": str(exc), "command": "",
+                    "to_dict": lambda self: {"success": False, "error": str(exc), "findings": [], "raw_output": "", "command": ""},
+                })()
+                result = result_obj  # type: ignore
 
-        db.complete_module_run(run_id, getattr(result, "raw_output", ""), getattr(result, "success", False))
-
-        for f in getattr(result, "findings", []):
-            db.add_finding(
-                session_id=session_id,
-                module=module_name,
-                severity=f.severity.value if hasattr(f.severity, "value") else str(f.severity),
-                title=f.title,
-                description=f.description,
-                evidence=f.evidence,
-                target=f.target or target,
+            db.complete_module_run(
+                run_id,
+                getattr(result, "raw_output", ""),
+                getattr(result, "success", False),
+                command=getattr(result, "command", ""),
             )
 
-        _jobs[job_id]["status"] = "completed" if getattr(result, "success", False) else "failed"
-        _jobs[job_id]["result"] = result.to_dict() if hasattr(result, "to_dict") else {}
-        loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
+            for f in getattr(result, "findings", []):
+                db.add_finding(
+                    session_id=session_id,
+                    module=module_name,
+                    severity=f.severity.value if hasattr(f.severity, "value") else str(f.severity),
+                    title=f.title,
+                    description=f.description,
+                    evidence=f.evidence,
+                    target=f.target or target,
+                )
+
+            _jobs[job_id]["status"] = "completed" if getattr(result, "success", False) else "failed"
+            _jobs[job_id]["result"] = result.to_dict() if hasattr(result, "to_dict") else {}
+        except Exception as exc:
+            # A failure here (e.g. a locked/unavailable DB) must not leave the
+            # job stuck "running" forever or the SSE client hanging on the
+            # queue — always finalize status and push the sentinel.
+            _jobs[job_id]["status"] = "failed"
+            _jobs[job_id]["result"] = {"success": False, "error": str(exc), "findings": [], "raw_output": "", "command": ""}
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
 
     loop.run_in_executor(_executor, _run_in_thread)
 
@@ -278,6 +292,18 @@ async def stream_job(job_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    if job_id not in _jobs:
+        raise HTTPException(404, "Job not found")
+    job = _jobs[job_id]
+    mod = job.get("module_instance")
+    if mod is None:
+        raise HTTPException(409, "Job has no running module instance to cancel")
+    mod.cancel()
+    return {"ok": True}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -666,7 +692,11 @@ async function runModule(name) {
   es.onerror = () => { log('[!] Stream error', 'err'); es.close(); };
 }
 
-function cancelJob() {
+async function cancelJob() {
+  if (currentJob) {
+    try { await api(`/jobs/${currentJob}/cancel`, {method:'POST'}); }
+    catch(e) { log('[!] Cancel request failed: ' + e.message, 'err'); }
+  }
   if (currentEs) { currentEs.close(); currentEs = null; }
   currentJob = null;
   document.getElementById('btnCancel').style.display = 'none';

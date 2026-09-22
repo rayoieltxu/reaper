@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from . import BaseModule, Finding, ModuleResult, Severity
+from . import BaseModule, Finding, ModuleResult, Severity, redact_command
 
 
 # ── NetExec (formerly CrackMapExec) ───────────────────────────────────────────
@@ -34,7 +34,8 @@ class NetExecModule(BaseModule):
         else:
             cmd.append("--no-bruteforce")
 
-        self._emit(f"[*] {' '.join(cmd)}")
+        cmd_str = redact_command(cmd, password)
+        self._emit(f"[*] {cmd_str}")
         rc, stdout, stderr = self.run_command(cmd)
         findings = self.parse_output(stdout)
 
@@ -42,7 +43,7 @@ class NetExecModule(BaseModule):
             success=rc == 0,
             findings=findings,
             raw_output=stdout + ("\n" + stderr if stderr else ""),
-            command=" ".join(cmd),
+            command=cmd_str,
         )
 
     def parse_output(self, output: str) -> list[Finding]:
@@ -182,7 +183,8 @@ class BloodhoundModule(BaseModule):
             "--disable-pooling",
             "-op", output_dir,
         ]
-        self._emit(f"[*] {' '.join(cmd)}")
+        cmd_str = redact_command(cmd, password)
+        self._emit(f"[*] {cmd_str}")
         rc, stdout, stderr = self.run_command(cmd)
 
         zip_files = list(Path(output_dir).glob("*.zip"))
@@ -206,7 +208,7 @@ class BloodhoundModule(BaseModule):
             success=rc == 0,
             findings=findings,
             raw_output=stdout + ("\n" + stderr if stderr else ""),
-            command=" ".join(cmd),
+            command=cmd_str,
         )
 
 
@@ -242,7 +244,8 @@ class CertipyModule(BaseModule):
         if action == "find":
             cmd.append("-vulnerable")
 
-        self._emit(f"[*] {' '.join(cmd)}")
+        cmd_str = redact_command(cmd, password)
+        self._emit(f"[*] {cmd_str}")
         rc, stdout, stderr = self.run_command(cmd)
 
         findings = self.parse_output(stdout + stderr)
@@ -250,7 +253,7 @@ class CertipyModule(BaseModule):
             success=rc == 0,
             findings=findings,
             raw_output=stdout,
-            command=" ".join(cmd),
+            command=cmd_str,
         )
 
     def parse_output(self, output: str) -> list[Finding]:
@@ -282,7 +285,12 @@ class ResponderModule(BaseModule):
             return ModuleResult(success=False, error="responder not found")
 
         interface = options.get("interface", "eth0")
-        duration = options.get("duration", 60)
+        duration_raw = options.get("duration", 60)
+        try:
+            duration = int(duration_raw)
+        except (TypeError, ValueError):
+            self._emit(f"[!] Invalid duration {duration_raw!r} — falling back to 60s")
+            duration = 60
 
         cmd = ["responder", "-I", interface, "-dwv", "--no-color"]
         self._emit(f"[*] Running Responder for {duration}s on {interface} (requires root)")
@@ -291,8 +299,15 @@ class ResponderModule(BaseModule):
         rc, stdout, stderr = self.run_command(cmd, timeout=duration)
 
         findings = self.parse_output(stdout)
+        # rc stays at run_command's -1 sentinel only if the process never
+        # actually completed its lifecycle (e.g. an unhandled exception in
+        # run_command); a timeout-kill (the expected way to stop Responder)
+        # still yields a real (usually negative/signal) returncode.
+        success = rc != -1
+        if not success:
+            self._emit("[!] Responder did not run correctly — check interface/duration/permissions")
         return ModuleResult(
-            success=True,  # responder exits non-zero when interrupted, that's normal
+            success=success,
             findings=findings,
             raw_output=stdout,
             command=" ".join(cmd),
@@ -348,7 +363,8 @@ class LinWinPwnModule(BaseModule):
         if password:
             cmd += ["-p", password]
 
-        self._emit(f"[*] {' '.join(cmd)}")
+        cmd_str = redact_command(cmd, password)
+        self._emit(f"[*] {cmd_str}")
         rc, stdout, stderr = self.run_command(cmd)
 
         findings = self.parse_output(stdout + stderr)
@@ -356,7 +372,7 @@ class LinWinPwnModule(BaseModule):
             success=rc == 0,
             findings=findings,
             raw_output=stdout,
-            command=" ".join(cmd),
+            command=cmd_str,
         )
 
     def parse_output(self, output: str) -> list[Finding]:
