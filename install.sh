@@ -65,6 +65,11 @@ install_go_tool "katana"     "github.com/projectdiscovery/katana/cmd/katana@late
 install_go_tool "ffuf"       "github.com/ffuf/ffuf/v2@latest"
 install_go_tool "dalfox"     "github.com/hahwul/dalfox/v2@latest"
 install_go_tool "kerbrute"   "github.com/ropnop/kerbrute@latest"
+# trufflehog v3 (what TruffleHogModule's `git`/`filesystem` subcommands and
+# --json/--no-update flags target) is Go-based, not the abandoned PyPI
+# package of the same name (that's the incompatible v2 CLI) — install it
+# the same way as the other Go tools above.
+install_go_tool "trufflehog" "github.com/trufflesecurity/trufflehog/v3@latest"
 
 info "Checking Python-based tools …"
 pip_install() {
@@ -73,7 +78,6 @@ pip_install() {
     info "  pip install $pkg …"
     "$python_bin" -m pip install --quiet "$pkg" && ok "  $name installed" || warn "  $name install failed"
 }
-pip_install "trufflehog"    "trufflehog"  # note: official binary preferred
 pip_install "bloodhound-python" "bloodhound"
 pip_install "certipy"       "certipy-ad"
 pip_install "netexec"       "netexec"

@@ -9,7 +9,7 @@ Framework de pentest todo-en-uno para GNU/Linux con CLI interactivo y Web UI.
 ## Instalacion rapida
 
 ```bash
-git clone https://github.com/TU_USUARIO/reaper
+git clone https://github.com/rayoieltxu/reaper
 cd reaper
 bash install.sh
 ```
